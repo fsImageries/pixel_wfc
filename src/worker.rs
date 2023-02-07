@@ -1,18 +1,20 @@
 use serde::{Deserialize, Serialize};
 use yew_agent::{HandlerId, Public, WorkerLink};
 
+use crate::wfc_field::Cell;
+
 pub struct Worker {
     link: WorkerLink<Self>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct WorkerInput {
-    pub n: u32,
+    pub dim: usize,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct WorkerOutput {
-    pub value: u32,
+    pub value: Box<[Cell]>,
 }
 
 impl yew_agent::Worker for Worker {
@@ -34,17 +36,14 @@ impl yew_agent::Worker for Worker {
         // and does not block the main
         // browser thread!
 
-        let n = msg.n;
+        let dim = msg.dim;
 
-        fn fib(n: u32) -> u32 {
-            if n <= 1 {
-                1
-            } else {
-                fib(n - 1) + fib(n - 2)
-            }
-        }
+        let mut data = (0..dim * dim)
+            .map(|_| Cell::new())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
-        let output = Self::Output { value: fib(n) };
+        let output = Self::Output { value: data };
 
         self.link.respond(id, output);
     }

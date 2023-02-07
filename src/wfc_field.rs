@@ -1,4 +1,5 @@
 use gloo::console::log;
+use serde::{Deserialize, Serialize};
 
 use crate::types::{Hsl, Index, JSTimer, Rand, Rgba};
 
@@ -21,7 +22,7 @@ pub enum PixelType {
     HSL(Hsl),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pixel {
     pub rgba: Rgba,
     pub hsl: Hsl,
@@ -121,10 +122,10 @@ impl Pixel {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Cell {
     pub px: Pixel,
     pub collapsed: bool,
-    num_blank: u32,
 }
 
 impl Cell {
@@ -132,7 +133,6 @@ impl Cell {
         Self {
             px: Pixel::new(),
             collapsed: false,
-            num_blank: 8,
         }
     }
 }
@@ -141,9 +141,11 @@ pub struct WFCField {
     pub data: Box<[Cell]>,
     pub dim: usize,
     pub epoch_idx: usize,
+    pub collapsed_cnt: usize,
     visited: Vec<Index>,
     last: Index,
     neighbours: Box<[Box<[Index]>]>,
+    timer: JSTimer,
 }
 
 impl WFCField {
@@ -172,6 +174,31 @@ impl WFCField {
             visited,
             neighbours,
             last: (x, y),
+            collapsed_cnt: 0,
+            timer: JSTimer::new(),
+        }
+    }
+
+    pub fn new_with_data(mut data: Box<[Cell]>, dim: usize) -> Self {
+        let x = Rand::gen_rangei32(0..(dim + 1) as i32) as usize;
+        let y = Rand::gen_rangei32(0..(dim + 1) as i32) as usize;
+
+        let idx = x * dim + y;
+        let mut visited = Vec::with_capacity(dim * 4);
+        visited.push((x, y));
+        data[idx].collapsed = true;
+        data[idx].px = Pixel::random();
+        let neighbours = WFCField::gen_neighbours(data.len(), dim);
+
+        Self {
+            data,
+            dim,
+            epoch_idx: 0,
+            collapsed_cnt: 0,
+            visited,
+            last: (x, y),
+            neighbours,
+            timer: JSTimer::new(),
         }
     }
 
@@ -270,6 +297,7 @@ impl WFCField {
                     let col = self.gen_value((*x, *y));
                     self.data[idx].collapsed = true;
                     self.data[idx].px.set_data(PixelType::HSL(col));
+                    self.collapsed_cnt += 1;
                 }
                 // return;
             }
@@ -280,6 +308,22 @@ impl WFCField {
                 .unwrap();
             self.visited.remove(idx);
         }
+
+        self.visited = self
+            .visited
+            .iter()
+            .enumerate()
+            .filter_map(|(n, x)| {
+                // if Rand::gen_rangef64(0.0, 1.0) < 0.5 {
+                //     return None;
+                // }
+                // if n > 500 {return None};
+                if self.is_blank(*x) {
+                    return None;
+                };
+                Some(*x)
+            })
+            .collect::<Vec<_>>();
     }
 
     pub fn epoch2(&mut self) {
@@ -295,6 +339,7 @@ impl WFCField {
                 let col = self.gen_value((*x, *y));
                 self.data[idx].collapsed = true;
                 self.data[idx].px.set_data(PixelType::HSL(col));
+                self.collapsed_cnt += 1;
             }
 
             if n == i {
@@ -315,10 +360,11 @@ impl WFCField {
     pub fn epoch3(&mut self) {
         // log!("Visited len: ", self.visited.len());
 
+        // self.timer.start_time();
         for (_x, _y) in self.visited.clone() {
             for (x, y) in self.neighbours[_x * self.dim + _y].iter() {
                 let idx = x * self.dim + y;
-                if !self.visited.contains(&(*x, *y)){
+                if !self.visited.contains(&(*x, *y)) {
                     self.visited.push((*x, *y));
                 }
 
@@ -326,6 +372,7 @@ impl WFCField {
                     let col = self.gen_value((*x, *y));
                     self.data[idx].collapsed = true;
                     self.data[idx].px.set_data(PixelType::HSL(col));
+                    self.collapsed_cnt += 1;
                 }
                 // return;
             }
@@ -336,19 +383,54 @@ impl WFCField {
                 .unwrap();
             self.visited.remove(idx);
         }
+        // self.timer.epoch_from_start("Neighs took");
 
+        // self.timer.start_time();
         let l = self.visited.len();
-        if l > 200 {
+        if l > 100 {
+            let mut cnt = 0;
             self.visited = self
                 .visited
                 .iter()
                 .filter_map(|x| {
+                    if Rand::gen_rangef64(0.0, 1.0) < 0.5 {
+                        return None;
+                    }
                     if self.is_blank(*x) {
                         return None;
                     };
                     Some(*x)
                 })
-                .collect();
+                .filter(|_| {
+                    if cnt < 100 {
+                        {
+                            cnt += 1;
+                            true
+                        }
+                    } else {
+                        false
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if self.visited.len() < 2 {
+                self.visited = self
+                    .data
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(n, x)| {
+                        // p.x = index / 3;
+                        // p.y = index % 3;
+                        if !x.collapsed {
+                            let x = n / self.dim;
+                            let y = n % self.dim;
+                            return Some((x, y));
+                        }
+                        None
+                    })
+                    .collect();
+            }
         }
+        // self.timer.epoch_from_start("Visited reset took");
     }
 }
