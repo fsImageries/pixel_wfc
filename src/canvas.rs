@@ -45,9 +45,8 @@ impl Component for Canvas {
     type Message = Msg;
     type Properties = ();
     fn create(_ctx: &Context<Self>) -> Self {
-        let settings = (200, 3);
-        // let mut field = WFCField::new(settings.0);
-        // field.init();
+        let settings = (500, 2);
+        let mut field = WFCField::new(settings.0);
 
         let workers = (0..NUM_WORKERS)
             .map(|_| {
@@ -62,7 +61,7 @@ impl Component for Canvas {
         Self {
             canvas: NodeRef::default(),
             settings,
-            field: None,
+            field: Some(field),
             timer: JSTimer::new(),
             workers,
             timeout: None,
@@ -93,10 +92,10 @@ impl Component for Canvas {
                 // self.timer.epoch_from_start("Epoch took");
 
                 // log!("Epochs start");
-                self.timer.start_time();
+                // self.timer.start_time();
                 let field = self.field.as_mut().unwrap();
                 field.epoch3();
-                self.timer.epoch_from_start("Epoch took");
+                // self.timer.epoch_from_start("Epoch took");
 
                 // self.start_epoch();
 
@@ -159,8 +158,8 @@ impl Component for Canvas {
         let onclick3 = ctx.link().callback(move |_| Msg::Gen);
 
         let on_settings_change = ctx.link().callback(move |_| Msg::UpdateSettings);
-        // ctx.link().send_message(Msg::Draw);
-        ctx.link().send_message(Msg::WorkerStart);
+        ctx.link().send_message(Msg::Draw);
+        // ctx.link().send_message(Msg::WorkerStart);
         html! {
             <div>
                 <button onclick={&onclick}>{"Start"}</button>
@@ -216,14 +215,17 @@ impl Canvas {
         let scale = self.settings.1;
         let minus = 0;
         let field = self.field.as_ref().unwrap();
+
+        // log!(format!("{:?}", &field.data[0..24]));
         ctxx.clear_rect(0.0, 0.0, 1000.0, 1000.0);
         for x in 0..field.dim {
             for y in 0..field.dim {
-                let cl = &field.data[x * field.dim + y];
-                let px = &cl.px;
+                let px = field.get_pixel_1d(&(x * field.dim + y));                
+                // let cl = &field.data[x * field.dim + y];
+                // let px = &cl.px;
                 let cd = format!(
                     "rgba({},{},{},{})",
-                    px.rgba[0], px.rgba[1], px.rgba[2], px.rgba[3]
+                    px[0], px[1], px[2], px[3]
                 );
 
                 ctxx.set_fill_style(&cd.into());
@@ -282,7 +284,7 @@ impl Canvas {
             .map(|x| x.value.clone().into_vec())
             .flatten()
             .collect::<Box<[Cell]>>();
-        self.field = Some(WFCField::new_with_data(data, self.settings.0));
+        // self.field = Some(WFCField::new_with_data(data, self.settings.0));
 
         self.workers_results = vec![];
         log!("Field loaded");
