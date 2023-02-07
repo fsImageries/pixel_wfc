@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gloo::console::log;
 
-pub type Settings = (usize,);
+pub type Settings = (usize, usize);
 pub type Index = (usize, usize);
 pub type Hsl = [f64; 3];
 pub type Rgba = [u8; 4];

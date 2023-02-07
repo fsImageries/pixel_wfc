@@ -122,7 +122,7 @@ impl Pixel {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Cell {
     pub px: Pixel,
     pub collapsed: bool,

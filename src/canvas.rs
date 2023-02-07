@@ -1,5 +1,6 @@
 use gloo::console::log;
 use gloo::timers::callback::Timeout;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 use wasm_bindgen::Clamped;
@@ -12,10 +13,11 @@ use yew_agent::{Bridge, Bridged};
 
 use crate::types::JSTimer;
 use crate::types::Settings;
+use crate::wfc_field::Cell;
 use crate::wfc_field::{Pixel, WFCField};
 use crate::worker::{Worker, WorkerInput, WorkerOutput};
 
-const NUM_WORKERS: u8 = 1;
+const NUM_WORKERS: u8 = 5;
 
 pub enum Msg {
     Draw,
@@ -25,6 +27,7 @@ pub enum Msg {
     WorkerMsg(WorkerOutput),
     StartTimeout,
     StopTimeout,
+    UpdateSettings,
 }
 
 pub struct Canvas {
@@ -33,15 +36,17 @@ pub struct Canvas {
     field: Option<WFCField>,
     timer: JSTimer,
     workers: Box<[Box<dyn Bridge<Worker>>]>,
+    workers_results: Vec<WorkerOutput>,
     timeout: Option<Timeout>,
+    settings_nodes: [NodeRef; 2],
 }
 
 impl Component for Canvas {
     type Message = Msg;
     type Properties = ();
     fn create(_ctx: &Context<Self>) -> Self {
-        let settings = (500,);
-        let mut field = WFCField::new(settings.0);
+        let settings = (200, 3);
+        // let mut field = WFCField::new(settings.0);
         // field.init();
 
         let workers = (0..NUM_WORKERS)
@@ -61,6 +66,8 @@ impl Component for Canvas {
             timer: JSTimer::new(),
             workers,
             timeout: None,
+            workers_results: vec![],
+            settings_nodes: [NodeRef::default(), NodeRef::default()],
         }
     }
 
@@ -68,6 +75,15 @@ impl Component for Canvas {
         match msg {
             Msg::Draw => {
                 self.render_canvas();
+                false
+            }
+            Msg::UpdateSettings => {
+                ctx.link().send_message(Msg::StopTimeout);
+                let dim: usize = self.settings_nodes[0].cast::<HtmlInputElement>().unwrap().value().parse().unwrap();
+                let scale: usize = self.settings_nodes[1].cast::<HtmlInputElement>().unwrap().value().parse().unwrap();
+                self.settings = (dim, scale);
+                ctx.link().send_message(Msg::WorkerStart);
+                log!("Settings updated");
                 false
             }
             Msg::Epochs => {
@@ -107,18 +123,18 @@ impl Component for Canvas {
             }
             Msg::WorkerStart => {
                 log!("Field loading");
-                for i in 0..self.workers.len() {
-                    let worker = &mut self.workers[i];
-                    worker.send(WorkerInput {
-                        dim: self.settings.0
-                    });
-                }
+                self.start_field_workers();
                 false
             }
             Msg::WorkerMsg(v) => {
-                self.field = Some(WFCField::new_with_data(v.value, self.settings.0));
-                ctx.link().send_message(Msg::Draw);
-                log!("Field loaded");
+                self.workers_results.push(v);
+                if self.workers_results.len() == NUM_WORKERS as usize {
+                    self.join_workers();
+                    ctx.link().send_message(Msg::Draw);
+                }
+                // self.field = Some(WFCField::new_with_data(v.value, self.settings.0));
+                // ctx.link().send_message(Msg::Draw);
+                log!("Worker done");
                 false
             }
             Msg::StartTimeout => {
@@ -141,6 +157,8 @@ impl Component for Canvas {
         let onclick = ctx.link().batch_callback(move |_| vec![Msg::Epochs]);
         let onclick2 = ctx.link().callback(move |_| Msg::StopTimeout);
         let onclick3 = ctx.link().callback(move |_| Msg::Gen);
+
+        let on_settings_change = ctx.link().callback(move |_| Msg::UpdateSettings);
         // ctx.link().send_message(Msg::Draw);
         ctx.link().send_message(Msg::WorkerStart);
         html! {
@@ -148,6 +166,23 @@ impl Component for Canvas {
                 <button onclick={&onclick}>{"Start"}</button>
                 <button onclick={&onclick2}>{"Stop"}</button>
                 <button onclick={&onclick3}>{"Gen"}</button>
+
+                <div>
+                    <label for="dim">{"Dim (between 1 and 5000):"}
+                        <input type="number" id="dim" name="dim" min="1" max="5000"
+                        value={self.settings.0.to_string()}
+                         onchange={&on_settings_change} ref={self.settings_nodes[0].clone()}
+                         />
+                    </label>
+                </div>
+                <div>
+                    <label for="scale">{"Scale (between 1 and 10):"}
+                        <input type="number" id="scale" name="scale" min="1" max="10" 
+                        value={self.settings.1.to_string()}
+                        onchange={&on_settings_change} ref={self.settings_nodes[1].clone()}
+                        />
+                    </label>
+                </div>
                 // <div>
                 //     <label for="upper">{"Threshold"}
                 //     <input type="range" min="0" max="256" class="slider" id="upper" onchange={&on_change} ref={self.input[0].clone()}/>
@@ -178,7 +213,7 @@ impl Canvas {
         let ctxx: CanvasRenderingContext2d =
             canvas.get_context("2d").unwrap().unwrap().unchecked_into();
 
-        let scale = 1;
+        let scale = self.settings.1;
         let minus = 0;
         let field = self.field.as_ref().unwrap();
         ctxx.clear_rect(0.0, 0.0, 1000.0, 1000.0);
@@ -219,5 +254,37 @@ impl Canvas {
         // let res = ctxx.put_image_data(&img, 1.0, 1.0);
 
         // log!(format!("{:?}", res));
+    }
+
+    fn start_field_workers(&mut self) {
+        let n = NUM_WORKERS as usize;
+        let dim = self.settings.0;
+        let len = dim * dim;
+        let step = len / n;
+        let last_step = step + (len - (n * step));
+
+        for i in 0..n {
+            let worker = &mut self.workers[i];
+            worker.send(WorkerInput {
+                idx: i,
+                len: if i == n - 1 { last_step } else { step },
+                dim: self.settings.0,
+            });
+            log!(format!("Worker {} started", &i));
+        }
+    }
+
+    fn join_workers(&mut self) {
+        self.workers_results.sort_by(|a, b| a.idx.cmp(&b.idx));
+        let data = self
+            .workers_results
+            .iter()
+            .map(|x| x.value.clone().into_vec())
+            .flatten()
+            .collect::<Box<[Cell]>>();
+        self.field = Some(WFCField::new_with_data(data, self.settings.0));
+
+        self.workers_results = vec![];
+        log!("Field loaded");
     }
 }

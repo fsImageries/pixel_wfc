@@ -9,11 +9,14 @@ pub struct Worker {
 
 #[derive(Serialize, Deserialize)]
 pub struct WorkerInput {
+    pub idx: usize,
+    pub len: usize,
     pub dim: usize,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct WorkerOutput {
+    pub idx: usize,
     pub value: Box<[Cell]>,
 }
 
@@ -36,14 +39,14 @@ impl yew_agent::Worker for Worker {
         // and does not block the main
         // browser thread!
 
-        let dim = msg.dim;
+        let dim = msg.len;
 
-        let mut data = (0..dim * dim)
+        let data = (0..dim)
             .map(|_| Cell::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let output = Self::Output { value: data };
+        let output = Self::Output { value: data, idx: msg.idx };
 
         self.link.respond(id, output);
     }
